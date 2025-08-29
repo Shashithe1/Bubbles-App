@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bubbles App – CanvasJS Assignment (Plain JS)</title>
+  <style>
+    :root {
+      --bg: #0f172a;        /* slate-900 */
+      --panel: #111827;     /* gray-900 */
+      --ink: #e5e7eb;       /* gray-200 */
+      --muted: #94a3b8;     /* slate-400 */
+      --accent: #22d3ee;    /* cyan-400 */
+    }
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: radial-gradient(1200px 800px at 80% -10%, #1f2937, var(--bg));
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 32px auto;
+      padding: 16px;
+    }
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
+      overflow: hidden;
+    }
+    .head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; gap: 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0));
+    }
+    .title { font-weight: 700; letter-spacing: .2px; }
+    .controls { display: flex; gap: 8px; align-items: center; }
+    button {
+      appearance: none; border: 0; border-radius: 10px; cursor: pointer;
+      padding: 10px 14px; font-weight: 600; letter-spacing: .2px;
+      background: var(--accent); color: #0b1020;
+      box-shadow: 0 8px 24px rgba(34, 211, 238, .25);
+    }
+    button:active { transform: translateY(1px); }
+    .hint { color: var(--muted); font-size: 14px; }
+    .canvas-wrap { position: relative; background: var(--panel); }
+    canvas { display: block; width: 100%; height: auto; }
+    .footer { color: var(--muted); font-size: 12px; padding: 10px 16px; border-top: 1px solid rgba(255,255,255,0.06); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="head">
+        <div class="title">Bubbles App – HTML5 Canvas (Plain JavaScript)</div>
+        <div class="controls">
+          <span class="hint">Click inside a circle to launch its arrow. Hit changes color.</span>
+          <button id="resetBtn" title="Reset to initial state">Reset</button>
+        </div>
+      </div>
+      <div class="canvas-wrap">
+        <!-- Single Canvas for both modules -->
+        <canvas id="stage" width="900" height="500" aria-label="Bubbles Canvas" role="img"></canvas>
+      </div>
+      <div class="footer">No external libraries. All shapes are rendered on the same &lt;canvas&gt;.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      /*** CONFIG ***/
+      const CANVAS_W = 900;
+      const CANVAS_H = 500;
+      const CIRCLE_X = 140;           // left side position for circles
+      const RADIUS = 36;
+      const ROWS = 4;
+      const GAP_Y = 100;               // vertical gap between circles
+      const START_Y = 110;             // first circle y
+      const ARROW_START_X = CANVAS_W - 120; // right side starting tip x
+      const ARROW_SPEED = 6;           // px/frame
+      const ARROW_SHAFT = 46;          // shaft length behind the tip
+      const ARROW_WIDTH = 6;           // line width
+      const ARROW_HEAD = 14;           // head size
+
+      const COLORS = [
+        { base: "#ef4444", hit: "#b91c1c" }, // red
+        { base: "#22c55e", hit: "#15803d" }, // green
+        { base: "#3b82f6", hit: "#1d4ed8" }, // blue
+        { base: "#f59e0b", hit: "#b45309" }  // amber
+      ];
+
+      /*** STATE ***/
+      const canvas = document.getElementById("stage");
+      const ctx = canvas.getContext("2d");
+      const resetBtn = document.getElementById("resetBtn");
+
+      canvas.width = CANVAS_W; // ensure intrinsic size
+      canvas.height = CANVAS_H;
+
+      // circles[i] maps to arrows[i]
+      let circles = [];
+      let arrows = [];
+      let running = false; // controls the animation loop
+
+      function init() {
+        circles = Array.from({ length: ROWS }, (_, i) => ({
+          id: i,
+          x: CIRCLE_X,
+          y: START_Y + i * GAP_Y,
+          r: RADIUS,
+          color: COLORS[i % COLORS.length].base,
+          hitColor: COLORS[i % COLORS.length].hit,
+          isHit: false,
+        }));
+
+        arrows = circles.map((c, i) => ({
+          id: i,
+          y: c.y,
+          tipX: ARROW_START_X,     // tip position (moves left towards circle)
+          moving: false,
+          done: false,
+        }));
+
+        running = true;
+        requestAnimationFrame(loop);
+      }
+
+      /*** DRAW HELPERS ***/
+      function clear() {
+        // Subtle grid background for visual polish
+        ctx.fillStyle = "#0b1220";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.globalAlpha = 0.08;
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "#7dd3fc"; // light cyan tint
+        const grid = 20;
+        for (let x = 0; x <= canvas.width; x += grid) {
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+        }
+        for (let y = 0; y <= canvas.height; y += grid) {
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function drawCircle(c) {
+        ctx.save();
+        ctx.shadowColor = c.isHit ? "rgba(34,197,94,0.5)" : "rgba(0,0,0,0.5)";
+        ctx.shadowBlur = c.isHit ? 18 : 8;
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+        ctx.fillStyle = c.isHit ? c.hitColor : c.color;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "rgba(255,255,255,0.35)";
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawArrow(tipX, y) {
+        // Draw arrow pointing left. "tip" is the front-most point.
+        const baseX = tipX + ARROW_SHAFT;
+
+        ctx.save();
+        ctx.lineWidth = ARROW_WIDTH;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = "#e2e8f0"; // light ink
+        ctx.fillStyle = ctx.strokeStyle;
+
+        // shaft
+        ctx.beginPath();
+        ctx.moveTo(baseX, y);
+        ctx.lineTo(tipX, y);
+        ctx.stroke();
+
+        // head (triangle)
+        ctx.beginPath();
+        ctx.moveTo(tipX, y);
+        ctx.lineTo(tipX + ARROW_HEAD, y - ARROW_HEAD * 0.75);
+        ctx.lineTo(tipX + ARROW_HEAD, y + ARROW_HEAD * 0.75);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      function drawDecor() {
+        // Labels & vertical guide rails for clarity
+        ctx.save();
+        ctx.fillStyle = "rgba(255,255,255,0.75)";
+        ctx.font = "600 14px ui-sans-serif, system-ui, -apple-system, Segoe UI";
+        ctx.fillText("Circles", 32, 40);
+        ctx.fillText("Arrows", CANVAS_W - 100, 40);
+
+        ctx.globalAlpha = 0.15;
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#22d3ee";
+        ctx.beginPath();
+        ctx.moveTo(CIRCLE_X, 60);
+        ctx.lineTo(CIRCLE_X, CANVAS_H - 40);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(ARROW_START_X + ARROW_SHAFT / 2, 60);
+        ctx.lineTo(ARROW_START_X + ARROW_SHAFT / 2, CANVAS_H - 40);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      /*** HIT TEST & EVENTS ***/
+      function isPointInCircle(px, py, c) {
+        const dx = px - c.x;
+        const dy = py - c.y;
+        return dx * dx + dy * dy <= c.r * c.r;
+      }
+
+      canvas.addEventListener("click", function (e) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+
+        for (let i = 0; i < circles.length; i++) {
+          const c = circles[i];
+          const a = arrows[i];
+          if (isPointInCircle(x, y, c)) {
+            if (!a.moving && !a.done) {
+              a.moving = true; // start the arrow
+            }
+            break; // one circle per click
+          }
+        }
+      });
+
+      resetBtn.addEventListener("click", function () {
+        // Reset state to initial configuration
+        circles.forEach((c, i) => {
+          c.isHit = false;
+          c.color = COLORS[i % COLORS.length].base;
+        });
+        arrows.forEach((a) => {
+          a.tipX = ARROW_START_X;
+          a.moving = false;
+          a.done = false;
+        });
+      });
+
+      /*** PHYSICS & LOOP ***/
+      function step() {
+        // Move active arrows and handle collisions
+        for (let i = 0; i < arrows.length; i++) {
+          const a = arrows[i];
+          const c = circles[i];
+
+          if (a.moving && !a.done) {
+            a.tipX -= ARROW_SPEED;
+
+            // Collision: when arrow tip enters circle radius
+            const dx = a.tipX - c.x;
+            const dy = 0; // same y
+            if (dx * dx + dy * dy <= c.r * c.r) {
+              a.moving = false;
+              a.done = true;
+              c.isHit = true;
+              // optional: nudge tip to circle boundary to avoid visual overlap
+              const boundaryTipX = c.x + Math.cos(Math.PI) * c.r; // left-facing, so -r from center
+              a.tipX = boundaryTipX;
+            }
+
+            // Safety: stop if arrow passes far beyond the circle
+            if (a.tipX < -50) {
+              a.moving = false;
+              a.done = true;
+            }
+          }
+        }
+      }
+
+      function render() {
+        clear();
+        drawDecor();
+
+        // Draw circles (left)
+        for (let i = 0; i < circles.length; i++) {
+          drawCircle(circles[i]);
+        }
+
+        // Draw arrows (right -> moving left)
+        for (let i = 0; i < arrows.length; i++) {
+          drawArrow(arrows[i].tipX, arrows[i].y);
+        }
+      }
+
+      function loop() {
+        if (!running) return;
+        step();
+        render();
+        requestAnimationFrame(loop);
+      }
+
+      // Boot
+      init();
+    })();
+  </script>
+</body>
+</html>
